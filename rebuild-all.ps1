@@ -1,4 +1,4 @@
-# rebuild-all.ps1
+﻿# rebuild-all.ps1
 # Rebuilds mishna-data.json from scratch using Sefaria (free, no API key).
 # Applies sentence-based phrase splitting to every tractate.
 # Uses a custom JSON builder to guarantee segments are always JSON arrays.
@@ -168,21 +168,101 @@ function Get-Phrases([string]$heText, [string]$enText) {
   return @($phrases)
 }
 
-function Merge-Attribs([string[]]$parts) {
-  $out = [System.Collections.ArrayList]::new(); $i = 0
-  while ($i -lt $parts.Count) {
-    $p = $parts[$i].Trim()
-    if ($i -lt $parts.Count-1 -and $p.Length -lt 70 -and
-        $p -match '(?i)(said|says|stated|declared|replied|asked|responded|:)\s*$') {
-      $out.Add($p + ' — ' + $parts[$i+1].Trim()) | Out-Null; $i += 2
-    } else { $out.Add($p) | Out-Null; $i++ }
+# ── Hebrew-marker-based segment splitting ────────────────────────────────────
+# Builds a regex pattern that tolerates Hebrew nikud (vowel marks) between letters.
+function NP([string]$word) {
+  $N = '[֑-ׇ׳״]*'
+  $parts = foreach ($c in $word.ToCharArray()) {
+    if ($c -eq ' ') { '\s+' } else { [regex]::Escape("$c") + $N }
   }
-  return @($out)
+  return ($parts -join '')
+}
+
+$script:wawOpt = '(?:' + (NP 'ו') + ')?'
+
+# Fixed segment-start markers (split BEFORE these phrases)
+$script:fixedMarkers = @(
+  'וחכמים אומרים','חכמים אומרים',
+  'מעשה',
+  'ולא זו בלבד','לא זו בלבד',
+  'בית שמאי אומרים','בית הלל אומרים','ובית שמאי אומרים','ובית הלל אומרים',
+  'כלל אמרו','כלל גדול אמרו',
+  'אמרו לו','אמרו לה','אמרו להם','אמרו להן',
+  'אמר לו','אמר לה','אמר להם','אמר להן'
+)
+$script:fixedPats = @($script:fixedMarkers | ForEach-Object { NP $_ })
+$script:rabbiSays = $script:wawOpt + (NP 'רבי') + '\s+\S+\s+' + (NP 'אומר')
+$script:rabbiSaid = $script:wawOpt + (NP 'אמר') + '\s+' + (NP 'רבי') + '\s+\S+'
+$script:allPats   = @($script:fixedPats) + @($script:rabbiSays, $script:rabbiSaid)
+$script:segMarkerRegex = '(?<=^|[\s.,:;])(?=' + ($script:allPats -join '|') + ')'
+
+# Dialogue verbs that should merge into a preceding מעשה (story) segment
+$script:dlgPats = @('אמרו לו','אמרו לה','אמרו להם','אמרו להן','אמר לו','אמר לה','אמר להם','אמר להן') |
+                  ForEach-Object { NP $_ }
+$script:dialogRegex = '^\s*(' + ($script:dlgPats -join '|') + ')'
+$script:storyRegex  = '^\s*' + (NP 'מעשה')
+
+function Get-HebrewSegments([string]$he) {
+  $raw = @([regex]::Split($he, $script:segMarkerRegex) | Where-Object { $_.Trim() -ne '' })
+  if ($raw.Count -le 1) { return $raw }
+  $result = [System.Collections.ArrayList]::new()
+  $inStory = $false
+  foreach ($seg in $raw) {
+    if ($seg -match $script:storyRegex) {
+      $result.Add($seg) | Out-Null; $inStory = $true
+    } elseif ($inStory -and ($seg -match $script:dialogRegex)) {
+      $result[$result.Count-1] = $result[$result.Count-1].TrimEnd() + ' ' + $seg.TrimStart()
+    } else {
+      $result.Add($seg) | Out-Null; $inStory = $false
+    }
+  }
+  return @($result)
 }
 
 function Get-Segments([string]$he, [string]$en) {
-  # One segment per mishna; phrases are Hebrew-period-driven.
-  return @(@{ phrases = Get-Phrases $he $en })
+  $heSegs = @(Get-HebrewSegments $he)
+  if ($heSegs.Count -le 1) {
+    return @(@{ phrases = Get-Phrases $he $en })
+  }
+
+  # Slice English proportionally to Hebrew segment lengths, snap to period
+  $segs    = [System.Collections.ArrayList]::new()
+  $heTotal = [Math]::Max($he.Length, 1)
+  $enTotal = $en.Length
+  $heCum   = 0
+  $enCur   = 0
+
+  for ($i = 0; $i -lt $heSegs.Count; $i++) {
+    $heSeg = $heSegs[$i].Trim()
+    $heCum += $heSegs[$i].Length
+
+    if ($i -lt $heSegs.Count - 1) {
+      $frac    = $heCum / $heTotal
+      $target  = [int]($frac * $enTotal)
+      $window  = [int]($enTotal * 0.25)
+      $bestDot = -1; $bestDist = $window + 1
+      $kStart  = [Math]::Max($enCur, $target - $window)
+      $kEnd    = [Math]::Min($enTotal, $target + $window)
+      for ($k = $kStart; $k -lt $kEnd; $k++) {
+        if ($en[$k] -eq '.') {
+          $d = [Math]::Abs($k - $target)
+          if ($d -lt $bestDist) { $bestDist = $d; $bestDot = $k }
+        }
+      }
+      if ($bestDot -ge 0) { $enSplit = $bestDot + 1 }
+      else {
+        $enSplit = $target
+        while ($enSplit -lt $enTotal-1 -and $en[$enSplit] -ne ' ') { $enSplit++ }
+      }
+      $enSeg = $en.Substring($enCur, [Math]::Max(0, $enSplit - $enCur)).Trim()
+      $enCur = [Math]::Min($enSplit + 1, $enTotal)
+    } else {
+      $enSeg = if ($enCur -lt $enTotal) { $en.Substring($enCur).Trim() } else { '' }
+    }
+
+    $segs.Add(@{ phrases = Get-Phrases $heSeg $enSeg }) | Out-Null
+  }
+  return @($segs)
 }
 
 # ── Custom JSON serialiser (guarantees [...] for any segment count) ────────────
