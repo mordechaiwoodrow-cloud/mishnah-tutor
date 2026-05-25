@@ -100,41 +100,68 @@ function Invoke-Sefaria([string]$url) {
   }
 }
 
-# ── Sentence-based segmentation ───────────────────────────────────────────────
+# ── Hebrew-driven phrase segmentation ─────────────────────────────────────────
 
-function Get-Sentences([string]$text) {
-  $text = $text.Trim()
-  $raw  = @([regex]::Split($text, '(?<=[.!?])\s+') | Where-Object { $_.Trim() -ne '' })
+# Split Hebrew text on sentence-ending periods. Merge sentences of <=3 words
+# into the nearest neighbor. The final ':' (sof-pasuk) is treated as text end.
+function Get-HebrewSentences([string]$text) {
+  $text = $text.Trim().TrimEnd(':',' ').Trim()
+  $raw  = @([regex]::Split($text, '(?<=\.)\s+') | Where-Object { $_.Trim() -ne '' })
   if ($raw.Count -le 1) { return @($text) }
   $buf = [System.Collections.ArrayList]::new()
   foreach ($s in $raw) {
-    $wc = @($s.Trim() -split '\s+').Count
-    if ($wc -le 3 -and $buf.Count -gt 0) { $buf[$buf.Count-1] = $buf[$buf.Count-1] + ' ' + $s.Trim() }
-    else { $buf.Add($s.Trim()) | Out-Null }
+    $t  = $s.Trim()
+    $wc = @($t -split '\s+').Count
+    if ($wc -le 3 -and $buf.Count -gt 0) { $buf[$buf.Count-1] = $buf[$buf.Count-1] + ' ' + $t }
+    else { $buf.Add($t) | Out-Null }
   }
+  # If the very first sentence is still <=3 words, glue it onto the next one
   if ($buf.Count -ge 2 -and (@($buf[0] -split '\s+').Count -le 3)) {
     $buf[1] = $buf[0] + ' ' + $buf[1]; $buf.RemoveAt(0)
   }
   return @($buf)
 }
 
+# Phrases are driven by Hebrew sentence boundaries; English is sliced
+# proportionally and snapped to word boundaries.
 function Get-Phrases([string]$heText, [string]$enText) {
   $heText = $heText.Trim(); $enText = $enText.Trim()
-  $sents  = Get-Sentences $enText
-  if ($sents.Count -le 1) { return @(@{ he = $heText; en = $enText }) }
+  $heSents = Get-HebrewSentences $heText
+  if ($heSents.Count -le 1) { return @(@{ he = $heText; en = $enText }) }
+
   $phrases = [System.Collections.ArrayList]::new()
-  $enTotal = [Math]::Max($enText.Length, 1); $heTotal = $heText.Length
+  $heTotal = [Math]::Max($heText.Length, 1)
+  $enTotal = $enText.Length
   $heCur = 0; $enCur = 0
-  for ($i = 0; $i -lt $sents.Count; $i++) {
-    $enS = $sents[$i]; $enCur += $enS.Length + 1
-    if ($i -lt $sents.Count - 1) {
-      $frac = [Math]::Min($enCur, $enTotal) / $enTotal
-      $heSp = [int]($frac * $heTotal)
-      while ($heSp -lt ($heTotal-1) -and $heText[$heSp] -ne ' ') { $heSp++ }
-      $heS = $heText.Substring($heCur, [Math]::Max(0,$heSp-$heCur)).Trim()
-      $heCur = [Math]::Min($heSp+1, $heTotal)
+
+  for ($i = 0; $i -lt $heSents.Count; $i++) {
+    $heS = $heSents[$i]
+    # advance heCur past this sentence in the original text
+    $idx = $heText.IndexOf($heS, $heCur)
+    if ($idx -ge 0) { $heCur = $idx + $heS.Length } else { $heCur += $heS.Length }
+
+    if ($i -lt $heSents.Count - 1) {
+      $frac    = [Math]::Min($heCur, $heTotal) / $heTotal
+      $target  = [int]($frac * $enTotal)
+      # Snap to nearest English period within +/- 25% of total length
+      $window  = [int]($enTotal * 0.25)
+      $bestDot = -1; $bestDist = $window + 1
+      for ($k = [Math]::Max(0, $target - $window); $k -lt [Math]::Min($enTotal, $target + $window); $k++) {
+        if ($enText[$k] -eq '.') {
+          $d = [Math]::Abs($k - $target)
+          if ($d -lt $bestDist -and ($k + 1) -gt $enCur) { $bestDist = $d; $bestDot = $k }
+        }
+      }
+      if ($bestDot -ge 0) {
+        $enSplit = $bestDot + 1
+      } else {
+        $enSplit = $target
+        while ($enSplit -lt $enTotal-1 -and $enText[$enSplit] -ne ' ') { $enSplit++ }
+      }
+      $enS = $enText.Substring($enCur, [Math]::Max(0, $enSplit - $enCur)).Trim()
+      $enCur = [Math]::Min($enSplit + 1, $enTotal)
     } else {
-      $heS = if ($heCur -lt $heTotal) { $heText.Substring($heCur).Trim() } else { '' }
+      $enS = if ($enCur -lt $enTotal) { $enText.Substring($enCur).Trim() } else { '' }
     }
     $phrases.Add(@{ he = $heS; en = $enS }) | Out-Null
   }
@@ -154,52 +181,8 @@ function Merge-Attribs([string[]]$parts) {
 }
 
 function Get-Segments([string]$he, [string]$en) {
-  # Em-dash split
-  $hD = @([regex]::Split($he, '\s*[—–]\s*') | Where-Object { $_ -ne '' })
-  $eD = @([regex]::Split($en, '\s*[—–]\s*') | Where-Object { $_ -ne '' })
-  if ($hD.Count -ge 2 -and $eD.Count -ge 2) {
-    $hM = Merge-Attribs $hD; $eM = Merge-Attribs $eD
-    $n  = [Math]::Min($hM.Count, $eM.Count)
-    if ($n -ge 2) {
-      return @(for ($i=0;$i-lt$n;$i++) { @{phrases=Get-Phrases $hM[$i] $eM[$i]} })
-    }
-  }
-  # Opinion split
-  $opP = '(?=Beit Shammai|Beit Hillel|Rabbi \w+ says|The Sages say|Rabban \w+ says)'
-  $eOp = @([regex]::Split($en, $opP) | Where-Object { $_ -ne '' })
-  if ($eOp.Count -ge 2) {
-    $eOp = @($eOp | ForEach-Object {
-      $t = [regex]::Replace($_.Trim(),'(?i)^\s*(and|or|but)\s+','')
-      [regex]::Replace($t,'(?i)\s+(and|or|but)\s*$','.')
-    })
-    $eOp = Merge-Attribs $eOp
-    $eT = [Math]::Max($en.Length,1); $hT = $he.Length; $hC=0; $eC=0
-    $segs = [System.Collections.ArrayList]::new()
-    for ($i=0;$i-lt$eOp.Count;$i++) {
-      $eS = $eOp[$i]; $eC += $eOp[$i].Length
-      if ($i -lt $eOp.Count-1) {
-        $hSp = [int]([Math]::Min($eC,$eT)/$eT*$hT)
-        while ($hSp -lt $hT-1 -and $he[$hSp] -ne ' ') { $hSp++ }
-        $heS = $he.Substring($hC,[Math]::Max(0,$hSp-$hC)).Trim(); $hC=$hSp
-      } else { $heS = $he.Substring([Math]::Min($hC,$hT)).Trim() }
-      if ($heS -or $eS) { $segs.Add(@{phrases=Get-Phrases $heS $eS}) | Out-Null }
-    }
-    if ($segs.Count -ge 2) { return @($segs) }
-  }
-  # Split sentence groups
-  $sents = Get-Sentences $en
-  if ($sents.Count -ge 3) {
-    $half = [int]($sents.Count/2)
-    $e1 = ($sents[0..($half-1)] -join ' ').Trim()
-    $e2 = ($sents[$half..($sents.Count-1)] -join ' ').Trim()
-    $sp = [int]($e1.Length/$en.Length*$he.Length)
-    while ($sp -lt $he.Length-1 -and $he[$sp] -ne ' ') { $sp++ }
-    return @(
-      @{phrases=Get-Phrases $he.Substring(0,[Math]::Min($sp,$he.Length)).Trim() $e1},
-      @{phrases=Get-Phrases $he.Substring([Math]::Min($sp,$he.Length)).Trim()   $e2}
-    )
-  }
-  return @(@{phrases=Get-Phrases $he $en})
+  # One segment per mishna; phrases are Hebrew-period-driven.
+  return @(@{ phrases = Get-Phrases $he $en })
 }
 
 # ── Custom JSON serialiser (guarantees [...] for any segment count) ────────────
