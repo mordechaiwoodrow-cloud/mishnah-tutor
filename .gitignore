@@ -1,0 +1,10 @@
+# Claude Code local settings
+.claude/
+
+# Old Netlify config (replaced by Cloudflare Pages)
+netlify/
+netlify.toml
+
+# OS files
+Thumbs.db
+.DS_Store

@@ -1,0 +1,9 @@
+{
+  "name": "Mishnah Socratic Tutor",
+  "short_name": "Mishnah Tutor",
+  "start_url": "./index.html",
+  "display": "standalone",
+  "background_color": "#0f1419",
+  "theme_color": "#d4a857",
+  "orientation": "portrait"
+}

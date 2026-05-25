@@ -1,0 +1,568 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no" />
+  <meta name="apple-mobile-web-app-capable" content="yes" />
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent" />
+  <meta name="apple-mobile-web-app-title" content="Mishnah Tutor" />
+  <title>Mishnah Socratic Tutor</title>
+  <link rel="manifest" href="manifest.json" />
+  <style>
+    :root {
+      --bg: #0f1419; --panel: #1a2028; --accent: #d4a857;
+      --text: #e8e8e8; --muted: #8a9099; --border: #2a3038;
+      --green: #4caf7d; --red: #e05c5c;
+    }
+    * { box-sizing: border-box; margin: 0; padding: 0; }
+    html, body { background: var(--bg); color: var(--text); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif; min-height: 100vh; }
+    body { padding: 16px; padding-bottom: 130px; max-width: 720px; margin: 0 auto; }
+    h1 { font-size: 1.3rem; color: var(--accent); text-align: center; padding: 10px 0 14px; }
+
+    .row { display: flex; gap: 8px; margin-bottom: 10px; }
+    .row-wrap { display: flex; gap: 8px; margin-bottom: 10px; flex-wrap: wrap; }
+    select { flex: 1; background: var(--panel); color: var(--text); border: 1px solid var(--border); border-radius: 8px; padding: 11px 10px; font-size: 0.95rem; min-width: 0; }
+    select optgroup { font-weight: 700; color: var(--accent); }
+    .btn-load { background: var(--accent); color: #1a1a1a; border: none; border-radius: 8px; padding: 11px 18px; font-size: 0.95rem; font-weight: 700; cursor: pointer; white-space: nowrap; -webkit-tap-highlight-color: transparent; }
+    .btn-load:active { opacity: 0.7; }
+    .btn-load:disabled { opacity: 0.4; cursor: default; }
+
+    .settings { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 12px 14px; margin-bottom: 12px; display: flex; flex-direction: column; gap: 10px; }
+    .setting-row { display: flex; align-items: center; gap: 10px; font-size: 0.85rem; color: var(--muted); }
+    .setting-row label { min-width: 56px; flex-shrink: 0; }
+    input[type="range"] { flex: 1; accent-color: var(--accent); }
+    .val { min-width: 36px; text-align: right; color: var(--accent); font-weight: 700; }
+    .rep-control { display: flex; align-items: center; gap: 6px; }
+    .rep-control span { color: var(--accent); font-weight: 700; min-width: 18px; text-align: center; }
+    .rep-btn { background: var(--border); color: var(--text); border: none; border-radius: 6px; width: 30px; height: 30px; font-size: 1.1rem; cursor: pointer; -webkit-tap-highlight-color: transparent; display: flex; align-items: center; justify-content: center; }
+    .rep-btn:active { opacity: 0.6; }
+
+    .state-banner {
+      text-align: center; padding: 14px; border-radius: 12px; margin-bottom: 10px;
+      font-size: 1.1rem; font-weight: 700; display: none;
+      transition: background 0.3s;
+    }
+    .state-banner.visible { display: block; }
+    .state-banner.reading  { background: rgba(212,168,87,0.15); color: var(--accent); }
+    .state-banner.listening{ background: rgba(76,175,125,0.2);  color: #5ed49a; animation: pulse 1.5s infinite; }
+    .state-banner.thinking { background: rgba(100,160,255,0.12); color: #8ab4ff; }
+    .state-banner.feedback { background: rgba(100,160,255,0.12); color: #8ab4ff; }
+    @keyframes pulse { 0%,100%{opacity:1} 50%{opacity:0.6} }
+
+    .round-badge { text-align: center; font-size: 0.82rem; color: var(--muted); margin-bottom: 8px; min-height: 1.2em; }
+    .round-badge strong { color: var(--accent); }
+
+    .segment-card { background: var(--panel); border: 1px solid var(--border); border-radius: 12px; padding: 14px; margin-bottom: 10px; transition: border-color 0.2s; }
+    .segment-card.active-seg { border-color: var(--accent); }
+    .seg-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.06em; margin-bottom: 10px; }
+    .seg-label strong { color: var(--accent); }
+    .phrase-block { margin-bottom: 6px; }
+    .phrase-he { display: block; font-size: 1.3rem; line-height: 1.85; direction: rtl; text-align: right; font-family: "SBL Hebrew","Times New Roman",serif; color: #fff; border-radius: 6px; padding: 2px 4px; transition: background 0.2s; }
+    .phrase-en { display: block; font-size: 0.9rem; line-height: 1.6; color: var(--muted); border-radius: 6px; padding: 2px 4px; transition: background 0.2s; }
+    .phrase-he.active { background: rgba(212,168,87,0.18); color: var(--accent); }
+    .phrase-en.active { background: rgba(100,160,255,0.13); color: #8ab4ff; }
+    hr.div { border: none; border-top: 1px solid var(--border); margin: 8px 0; }
+
+    .status { font-size: 0.85rem; color: var(--muted); text-align: center; min-height: 1.3em; margin: 6px 0; }
+
+    .box { border-radius: 12px; padding: 14px; margin-bottom: 10px; font-size: 0.9rem; line-height: 1.6; display: none; }
+    .box.visible { display: block; }
+    .box-label { font-size: 0.72rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }
+    .transcript-box { background: var(--panel); border: 1px solid var(--border); color: var(--text); }
+    .feedback-box { border: 1px solid; }
+    .feedback-box.correct   { background: rgba(76,175,125,0.12); border-color: rgba(76,175,125,0.4); color: #5ed49a; }
+    .feedback-box.incorrect { background: rgba(224,92,92,0.10);  border-color: rgba(224,92,92,0.35); color: #f08080; }
+
+    .speak-fallback {
+      width: 100%; padding: 18px; font-size: 1.1rem; font-weight: 700;
+      background: var(--green); color: #fff; border: none; border-radius: 12px;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      margin-bottom: 10px; display: none;
+    }
+    .speak-fallback.visible { display: block; }
+    .speak-fallback:active { opacity: 0.75; }
+
+    .controls { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--border); padding: 10px 16px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
+    .ctrl-row { display: flex; gap: 8px; }
+    .ctrl-btn { flex: 1; padding: 13px; font-size: 0.95rem; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
+    .ctrl-btn.primary   { background: var(--accent); color: #1a1a1a; }
+    .ctrl-btn.secondary { background: #252e38; color: var(--text); border: 1px solid var(--border); }
+    .ctrl-btn:active { opacity: 0.7; }
+
+    .info { font-size: 0.85rem; color: var(--muted); text-align: center; padding: 24px 12px; line-height: 1.6; }
+  </style>
+</head>
+<body>
+  <h1>Mishnah Socratic Tutor</h1>
+
+  <!-- Row 1: Tractate -->
+  <div class="row">
+    <select id="tractate"><option>Loading…</option></select>
+  </div>
+  <!-- Row 2: Chapter + Mishnah + Load -->
+  <div class="row">
+    <select id="chapter"><option value="1">Chapter 1</option></select>
+    <select id="mishnah"><option value="1">Mishnah 1</option></select>
+    <button class="btn-load" id="loadBtn" disabled>Load</button>
+  </div>
+
+  <div class="settings">
+    <div class="setting-row">
+      <label>Speed</label>
+      <input type="range" id="speed" min="0.5" max="2.5" step="0.1" value="1.0" />
+      <span class="val" id="speedVal">1.0×</span>
+    </div>
+    <div class="setting-row">
+      <label>Repeats</label>
+      <div class="rep-control">
+        <button class="rep-btn" id="repMinus">−</button>
+        <span id="repCount">3</span>
+        <button class="rep-btn" id="repPlus">+</button>
+      </div>
+      <span style="color:var(--muted);font-size:0.78rem;margin-left:4px;">per segment</span>
+    </div>
+  </div>
+
+  <div class="state-banner" id="stateBanner"></div>
+  <div class="round-badge" id="roundBadge"></div>
+  <div id="textArea"><div class="info">Loading Mishna database…</div></div>
+  <div class="status" id="status"></div>
+
+  <div class="box transcript-box" id="transcriptBox">
+    <div class="box-label">You said</div>
+    <div id="transcriptText"></div>
+  </div>
+  <div class="box feedback-box" id="feedbackBox">
+    <div class="box-label">Feedback</div>
+    <div id="feedbackText"></div>
+  </div>
+
+  <button class="speak-fallback" id="speakFallback">🎙 Tap to Speak</button>
+
+  <div class="controls">
+    <div class="ctrl-row">
+      <button class="ctrl-btn primary"   id="playBtn">Play</button>
+      <button class="ctrl-btn secondary" id="pauseBtn">Pause</button>
+      <button class="ctrl-btn secondary" id="stopBtn">Stop</button>
+    </div>
+  </div>
+
+  <script>
+    const $ = id => document.getElementById(id);
+    const setStatus = msg => { $('status').textContent = msg; };
+
+    // ── State ──────────────────────────────────────────────────────
+    let segments      = [];
+    let segIndex      = 0;
+    let repTotal      = 3;
+    let repCurrent    = 0;
+    let isFinalReview = false;
+    let appState      = 'idle';
+    let awaitingInput = false;
+    let lastCaptureTime = 0;
+
+    let utterQueue = [], utterIndex = 0, isPaused = false;
+    let speechGen  = 0;
+    let allVoices  = [], heVoice = null, enVoice = null;
+    let recognition = null;
+
+    // ── Mishna Data ────────────────────────────────────────────────
+    let mishnaData = null;
+
+    async function loadMishnaData() {
+      try {
+        setStatus('Loading Mishna database…');
+        const res = await fetch('mishna-data.json');
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        mishnaData = await res.json();
+        populateTractates();
+        $('loadBtn').disabled = false;
+        $('textArea').innerHTML = '<div class="info">Select a tractate and tap Load.</div>';
+        setStatus('');
+      } catch(e) {
+        $('textArea').innerHTML = '<div class="info" style="color:var(--red)">Could not load mishna-data.json.<br>Run generate-mishna-data.ps1 first, then deploy.</div>';
+        setStatus('');
+      }
+    }
+
+    function populateTractates() {
+      const sel = $('tractate');
+      sel.innerHTML = '';
+      const meta = mishnaData._meta;
+      for (const seder of meta.sedarim) {
+        const grp = document.createElement('optgroup');
+        grp.label = 'Seder ' + seder;
+        for (const t of meta.tractates[seder]) {
+          const opt = document.createElement('option');
+          opt.value = t.sefaria;
+          opt.textContent = t.display;
+          grp.appendChild(opt);
+        }
+        sel.appendChild(grp);
+      }
+      onTractateChange();
+    }
+
+    function onTractateChange() {
+      const key = $('tractate').value;
+      const tractData = mishnaData[key] || {};
+      const chapters = Object.keys(tractData).filter(k => !isNaN(k)).sort((a,b) => +a - +b);
+      const sel = $('chapter');
+      sel.innerHTML = chapters.map(ch => `<option value="${ch}">Chapter ${ch}</option>`).join('');
+      onChapterChange();
+    }
+
+    function onChapterChange() {
+      const key = $('tractate').value;
+      const ch  = $('chapter').value;
+      const chData = (mishnaData[key] || {})[ch] || {};
+      const mishnahs = Object.keys(chData).sort((a,b) => +a - +b);
+      const sel = $('mishnah');
+      sel.innerHTML = mishnahs.map(m => `<option value="${m}">Mishnah ${m}</option>`).join('');
+    }
+
+    $('tractate').addEventListener('change', onTractateChange);
+    $('chapter').addEventListener('change', onChapterChange);
+
+    // ── Voices ─────────────────────────────────────────────────────
+    function loadVoices() {
+      allVoices = speechSynthesis.getVoices();
+      if (!allVoices.length) return;
+      heVoice = allVoices.find(v => v.lang.startsWith('he')) || null;
+      const enList = allVoices.filter(v => v.lang.startsWith('en'));
+      enVoice = enList.find(v => /enhanced|premium/i.test(v.name)) || enList[0] || null;
+    }
+    speechSynthesis.onvoiceschanged = loadVoices;
+    loadVoices();
+
+    // ── Audio chime ────────────────────────────────────────────────
+    function playChime() {
+      try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)();
+        [[880, 0], [1100, 0.28]].forEach(([freq, delay]) => {
+          const osc = ctx.createOscillator();
+          const gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.frequency.value = freq; osc.type = 'sine';
+          const t = ctx.currentTime + delay;
+          gain.gain.setValueAtTime(0.4, t);
+          gain.gain.exponentialRampToValueAtTime(0.001, t + 0.8);
+          osc.start(t); osc.stop(t + 0.8);
+        });
+      } catch(e) {}
+    }
+
+    // ── Settings ───────────────────────────────────────────────────
+    $('speed').addEventListener('input', e => { $('speedVal').textContent = parseFloat(e.target.value).toFixed(1) + '×'; });
+    $('repMinus').addEventListener('click', () => { if (repTotal > 1) { repTotal--; $('repCount').textContent = repTotal; } });
+    $('repPlus').addEventListener('click',  () => { if (repTotal < 10) { repTotal++; $('repCount').textContent = repTotal; } });
+
+    // ── State banner ───────────────────────────────────────────────
+    function setBanner(msg, cls) {
+      const b = $('stateBanner');
+      b.textContent = msg;
+      b.className = 'state-banner visible ' + cls;
+    }
+    function hideBanner() { $('stateBanner').className = 'state-banner'; }
+
+    // ── Load ───────────────────────────────────────────────────────
+    $('loadBtn').addEventListener('click', () => {
+      if (!mishnaData) return;
+      speechSynthesis.cancel();
+      stopRecognition();
+      resetSession();
+      const key = $('tractate').value;
+      const ch  = $('chapter').value;
+      const m   = $('mishnah').value;
+      const segs = ((mishnaData[key] || {})[ch] || {})[m];
+      if (!segs || !segs.length) {
+        setStatus('No data for this mishnah.');
+        return;
+      }
+      segments = segs;
+      setStatus(`Ready — ${segments.length} segment${segments.length !== 1 ? 's' : ''}. Tap Play.`);
+      renderSegments();
+    });
+
+    // ── Display ────────────────────────────────────────────────────
+    function renderSegments() {
+      $('textArea').innerHTML = '';
+      segments.forEach((seg, si) => {
+        const card = document.createElement('div');
+        card.className = 'segment-card'; card.id = `seg-${si}`;
+        const label = document.createElement('div');
+        label.className = 'seg-label';
+        label.innerHTML = `Segment <strong>${si+1}</strong> of <strong>${segments.length}</strong>`;
+        card.appendChild(label);
+        seg.phrases.forEach((p, pi) => {
+          if (pi > 0) { const hr = document.createElement('hr'); hr.className = 'div'; card.appendChild(hr); }
+          const block = document.createElement('div'); block.className = 'phrase-block';
+          const he = document.createElement('span'); he.className = 'phrase-he'; he.id = `he-${si}-${pi}`; he.textContent = p.he;
+          const en = document.createElement('span'); en.className = 'phrase-en'; en.id = `en-${si}-${pi}`; en.textContent = p.en;
+          block.appendChild(he); block.appendChild(en); card.appendChild(block);
+        });
+        $('textArea').appendChild(card);
+      });
+    }
+
+    function setActiveSegment(si) {
+      document.querySelectorAll('.segment-card').forEach(c => c.classList.remove('active-seg'));
+      const card = $(`seg-${si}`);
+      if (card) { card.classList.add('active-seg'); card.scrollIntoView({ behavior: 'smooth', block: 'start' }); }
+    }
+
+    function highlight(si, pi, side) {
+      document.querySelectorAll('.phrase-he,.phrase-en').forEach(el => el.classList.remove('active'));
+      if (si < 0) return;
+      const el = $(`${side}-${si}-${pi}`);
+      if (el) { el.classList.add('active'); el.scrollIntoView({ behavior: 'smooth', block: 'center' }); }
+    }
+
+    function setRoundBadge() {
+      if (!segments.length) { $('roundBadge').innerHTML = ''; return; }
+      $('roundBadge').innerHTML = isFinalReview
+        ? `<strong>Final Review</strong> — full Mishnah`
+        : `Segment <strong>${segIndex+1}</strong> of <strong>${segments.length}</strong> &nbsp;|&nbsp; Round <strong>${repCurrent}</strong> of <strong>${repTotal}</strong>`;
+    }
+
+    // ── Session management ─────────────────────────────────────────
+    function resetSession() {
+      speechGen++;
+      lastCaptureTime = 0;
+      segIndex = 0; repCurrent = 0; isFinalReview = false;
+      appState = 'idle'; awaitingInput = false; isPaused = false;
+      $('speakFallback').classList.remove('visible');
+      hide($('transcriptBox'));
+      $('transcriptText').textContent = '';
+      $('roundBadge').innerHTML = ''; setStatus(''); hideBanner();
+      document.querySelectorAll('.phrase-he,.phrase-en').forEach(el => el.classList.remove('active'));
+      document.querySelectorAll('.segment-card').forEach(c => c.classList.remove('active-seg'));
+    }
+
+    function hide(el)   { el.classList.remove('visible'); }
+    function show(el)   { el.classList.add('visible'); }
+    function clearMid() {
+      hide($('transcriptBox'));
+      $('speakFallback').classList.remove('visible');
+      $('transcriptText').textContent = '';
+    }
+
+    // ── Continuous recognition ─────────────────────────────────────
+    function setupRecognition() {
+      const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+      if (!SR) return;
+      recognition = new SR();
+      recognition.lang = 'he-IL';
+      recognition.continuous = true;
+      recognition.interimResults = false;
+      recognition.maxAlternatives = 1;
+
+      recognition.onresult = e => {
+        if (!awaitingInput) return;
+        const now = Date.now();
+        if (now - lastCaptureTime < 1500) return;
+        awaitingInput = false;
+        lastCaptureTime = now;
+        $('speakFallback').classList.remove('visible');
+        const transcript = e.results[e.resultIndex][0].transcript.trim();
+        onTranscriptCaptured(transcript);
+      };
+
+      recognition.onend = () => {
+        if (appState === 'idle' || appState === 'done') return;
+        try { recognition.start(); }
+        catch(e) {
+          if (awaitingInput) {
+            $('speakFallback').classList.add('visible');
+            setStatus('Auto-listen stopped — tap Speak to continue');
+          }
+        }
+      };
+
+      recognition.onerror = e => {
+        if (e.error === 'not-allowed') {
+          setStatus('Microphone access denied — check browser settings');
+        }
+      };
+    }
+
+    function startRecognition() {
+      if (!recognition) setupRecognition();
+      if (!recognition) return;
+      try { recognition.start(); } catch(e) {}
+    }
+
+    function stopRecognition() {
+      if (!recognition) return;
+      awaitingInput = false;
+      try { recognition.stop(); } catch(e) {}
+    }
+
+    function beginListening() {
+      appState = 'listening';
+      awaitingInput = true;
+      playChime();
+      setBanner('🔴 Speak now…', 'listening');
+      setStatus('');
+    }
+
+    // ── TTS helpers ────────────────────────────────────────────────
+    function speakText(text, lang, onDone) {
+      const gen = ++speechGen;
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang; u.rate = parseFloat($('speed').value);
+      if (lang.startsWith('he') && heVoice) u.voice = heVoice;
+      else if (enVoice) u.voice = enVoice;
+      const cb = () => { if (gen === speechGen && onDone) onDone(); };
+      u.onend  = cb;
+      u.onerror = cb;
+      speechSynthesis.speak(u);
+    }
+
+    function speakSequence(items, onAllDone) {
+      const gen = ++speechGen;
+      utterQueue = items; utterIndex = 0;
+      utterQueue._onDone = onAllDone;
+      speakNext(gen);
+    }
+
+    function speakNext(gen) {
+      if (gen !== speechGen) return;
+      if (utterIndex >= utterQueue.length) {
+        highlight(-1, -1, '');
+        if (utterQueue._onDone) utterQueue._onDone();
+        return;
+      }
+      const { text, lang, si, pi, side } = utterQueue[utterIndex];
+      highlight(si, pi, side);
+      const u = new SpeechSynthesisUtterance(text);
+      u.lang = lang; u.rate = parseFloat($('speed').value);
+      if (lang.startsWith('he')) {
+        if (!heVoice) { utterIndex++; speakNext(gen); return; }
+        u.voice = heVoice;
+      } else { if (enVoice) u.voice = enVoice; }
+      setBanner(side === 'he' ? '▶ Reading Hebrew…' : '▶ Reading English…', 'reading');
+      u.onend  = () => { utterIndex++; if (!isPaused) speakNext(gen); };
+      u.onerror = () => { utterIndex++; if (!isPaused) speakNext(gen); };
+      speechSynthesis.speak(u);
+    }
+
+    // ── Round flow ─────────────────────────────────────────────────
+    function startSegmentRound() {
+      repCurrent++;
+      clearMid(); setRoundBadge(); setActiveSegment(segIndex);
+      appState = 'reading'; isPaused = false;
+      speechGen++;
+      speechSynthesis.cancel();
+      speakSequence(buildSegmentQueue(segIndex), () => { beginListening(); });
+    }
+
+    function startFinalReview() {
+      isFinalReview = true; repCurrent = 0; clearMid(); setRoundBadge();
+      document.querySelectorAll('.segment-card').forEach(c => c.classList.remove('active-seg'));
+      appState = 'reading'; isPaused = false;
+      speechGen++;
+      speechSynthesis.cancel();
+      speakText('Final review — full Mishnah.', 'en-US', () => {
+        speakSequence(buildFullQueue(), () => { beginListening(); });
+      });
+    }
+
+    function buildSegmentQueue(si) {
+      const q = [];
+      segments[si].phrases.forEach((p, pi) => {
+        if (p.he) q.push({ text: p.he, lang: 'he-IL', si, pi, side: 'he' });
+        if (p.en) q.push({ text: p.en, lang: 'en-US', si, pi, side: 'en' });
+      });
+      return q;
+    }
+
+    function buildFullQueue() {
+      const q = [];
+      segments.forEach((seg, si) =>
+        seg.phrases.forEach((p, pi) => {
+          if (p.he) q.push({ text: p.he, lang: 'he-IL', si, pi, side: 'he' });
+          if (p.en) q.push({ text: p.en, lang: 'en-US', si, pi, side: 'en' });
+        })
+      );
+      return q;
+    }
+
+    // ── After transcript captured ──────────────────────────────────
+    function onTranscriptCaptured(transcript) {
+      appState = 'feedback';
+      $('transcriptText').textContent = transcript || '(nothing captured)';
+      show($('transcriptBox'));
+
+      if (!transcript || transcript.length < 2) {
+        setBanner('🔴 Speak now…', 'listening');
+        setTimeout(() => { awaitingInput = true; }, 800);
+        return;
+      }
+
+      const lastRound = repCurrent >= repTotal;
+      const lastSeg   = segIndex >= segments.length - 1;
+
+      if (isFinalReview) {
+        speakText('Great work. Session complete!', 'en-US', () => {
+          appState = 'done'; hideBanner();
+          setStatus('Session complete!'); stopRecognition();
+        });
+        return;
+      }
+
+      if (lastRound) {
+        if (lastSeg) {
+          startFinalReview();
+        } else {
+          speakText('Good. Next segment.', 'en-US', () => {
+            segIndex++; repCurrent = 0; startSegmentRound();
+          });
+        }
+      } else {
+        speakText('Good.', 'en-US', () => startSegmentRound());
+      }
+    }
+
+    // ── Fallback speak button ──────────────────────────────────────
+    $('speakFallback').addEventListener('click', () => {
+      $('speakFallback').classList.remove('visible');
+      if (recognition) {
+        try { recognition.stop(); } catch(e) {}
+        setTimeout(() => {
+          try { recognition.start(); awaitingInput = true; setBanner('🔴 Speak now…', 'listening'); } catch(e) {}
+        }, 300);
+      }
+    });
+
+    // ── Play / Pause / Stop ────────────────────────────────────────
+    $('playBtn').addEventListener('click', () => {
+      if (!segments.length) { setStatus('Load a Mishnah first.'); return; }
+      resetSession();
+      renderSegments();
+      startRecognition();
+      startSegmentRound();
+    });
+
+    $('pauseBtn').addEventListener('click', () => {
+      if (appState === 'reading') {
+        if (speechSynthesis.speaking && !speechSynthesis.paused) {
+          speechSynthesis.pause(); isPaused = true; setBanner('Paused', 'reading');
+        } else if (speechSynthesis.paused) {
+          speechSynthesis.resume(); isPaused = false;
+        }
+      }
+    });
+
+    $('stopBtn').addEventListener('click', () => {
+      speechSynthesis.cancel();
+      stopRecognition();
+      resetSession();
+      if (segments.length) { renderSegments(); setStatus('Stopped. Tap Play to start over.'); }
+    });
+
+    // ── Boot ───────────────────────────────────────────────────────
+    loadMishnaData();
+  </script>
+</body>
+</html>
