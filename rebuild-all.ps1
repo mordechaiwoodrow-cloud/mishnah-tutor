@@ -122,8 +122,27 @@ function Get-HebrewSentences([string]$text) {
   return @($buf)
 }
 
+# Find the nearest English period at or after $enCur, closest to $target.
+# Returns the position just AFTER the period. Falls back to nearest word boundary.
+function Find-EnSplit([string]$en, [int]$enCur, [int]$target) {
+  $enTotal = $en.Length
+  if ($enCur -ge $enTotal) { return $enTotal }
+  $bestDot = -1; $bestDist = $enTotal + 1
+  for ($k = $enCur; $k -lt $enTotal; $k++) {
+    if ($en[$k] -eq '.') {
+      $d = [Math]::Abs($k - $target)
+      if ($d -lt $bestDist) { $bestDist = $d; $bestDot = $k }
+      elseif ($k -gt $target -and $bestDot -ge 0) { break }  # passed target, period found earlier
+    }
+  }
+  if ($bestDot -ge 0) { return $bestDot + 1 }
+  $enSplit = [Math]::Min([Math]::Max($target, $enCur), $enTotal - 1)
+  while ($enSplit -lt $enTotal - 1 -and $en[$enSplit] -ne ' ') { $enSplit++ }
+  return $enSplit
+}
+
 # Phrases are driven by Hebrew sentence boundaries; English is sliced
-# proportionally and snapped to word boundaries.
+# proportionally and snapped to the nearest English period.
 function Get-Phrases([string]$heText, [string]$enText) {
   $heText = $heText.Trim(); $enText = $enText.Trim()
   $heSents = Get-HebrewSentences $heText
@@ -136,30 +155,15 @@ function Get-Phrases([string]$heText, [string]$enText) {
 
   for ($i = 0; $i -lt $heSents.Count; $i++) {
     $heS = $heSents[$i]
-    # advance heCur past this sentence in the original text
     $idx = $heText.IndexOf($heS, $heCur)
     if ($idx -ge 0) { $heCur = $idx + $heS.Length } else { $heCur += $heS.Length }
 
     if ($i -lt $heSents.Count - 1) {
       $frac    = [Math]::Min($heCur, $heTotal) / $heTotal
       $target  = [int]($frac * $enTotal)
-      # Snap to nearest English period within +/- 25% of total length
-      $window  = [int]($enTotal * 0.25)
-      $bestDot = -1; $bestDist = $window + 1
-      for ($k = [Math]::Max(0, $target - $window); $k -lt [Math]::Min($enTotal, $target + $window); $k++) {
-        if ($enText[$k] -eq '.') {
-          $d = [Math]::Abs($k - $target)
-          if ($d -lt $bestDist -and ($k + 1) -gt $enCur) { $bestDist = $d; $bestDot = $k }
-        }
-      }
-      if ($bestDot -ge 0) {
-        $enSplit = $bestDot + 1
-      } else {
-        $enSplit = $target
-        while ($enSplit -lt $enTotal-1 -and $enText[$enSplit] -ne ' ') { $enSplit++ }
-      }
-      $enS = $enText.Substring($enCur, [Math]::Max(0, $enSplit - $enCur)).Trim()
-      $enCur = [Math]::Min($enSplit + 1, $enTotal)
+      $enSplit = Find-EnSplit $enText $enCur $target
+      $enS     = $enText.Substring($enCur, [Math]::Max(0, $enSplit - $enCur)).Trim()
+      $enCur   = [Math]::Min($enSplit + 1, $enTotal)
     } else {
       $enS = if ($enCur -lt $enTotal) { $enText.Substring($enCur).Trim() } else { '' }
     }
@@ -219,50 +223,50 @@ function Get-HebrewSegments([string]$he) {
   return @($result)
 }
 
-function Get-Segments([string]$he, [string]$en) {
-  $heSegs = @(Get-HebrewSegments $he)
-  if ($heSegs.Count -le 1) {
-    return @(@{ phrases = Get-Phrases $he $en })
-  }
-
-  # Slice English proportionally to Hebrew segment lengths, snap to period
+# Slice Hebrew chunks into N segments and align English proportionally.
+# Each segment gets a {phrases=[...]} object via $phraseBuilder.
+function Split-AlignedSegments([string[]]$heChunks, [string]$en, [ScriptBlock]$phraseBuilder) {
   $segs    = [System.Collections.ArrayList]::new()
-  $heTotal = [Math]::Max($he.Length, 1)
+  $heTotal = [Math]::Max(($heChunks | ForEach-Object { $_.Length } | Measure-Object -Sum).Sum, 1)
   $enTotal = $en.Length
   $heCum   = 0
   $enCur   = 0
 
-  for ($i = 0; $i -lt $heSegs.Count; $i++) {
-    $heSeg = $heSegs[$i].Trim()
-    $heCum += $heSegs[$i].Length
+  for ($i = 0; $i -lt $heChunks.Count; $i++) {
+    $heSeg = $heChunks[$i].Trim()
+    $heCum += $heChunks[$i].Length
 
-    if ($i -lt $heSegs.Count - 1) {
+    if ($i -lt $heChunks.Count - 1) {
       $frac    = $heCum / $heTotal
       $target  = [int]($frac * $enTotal)
-      $window  = [int]($enTotal * 0.25)
-      $bestDot = -1; $bestDist = $window + 1
-      $kStart  = [Math]::Max($enCur, $target - $window)
-      $kEnd    = [Math]::Min($enTotal, $target + $window)
-      for ($k = $kStart; $k -lt $kEnd; $k++) {
-        if ($en[$k] -eq '.') {
-          $d = [Math]::Abs($k - $target)
-          if ($d -lt $bestDist) { $bestDist = $d; $bestDot = $k }
-        }
-      }
-      if ($bestDot -ge 0) { $enSplit = $bestDot + 1 }
-      else {
-        $enSplit = $target
-        while ($enSplit -lt $enTotal-1 -and $en[$enSplit] -ne ' ') { $enSplit++ }
-      }
-      $enSeg = $en.Substring($enCur, [Math]::Max(0, $enSplit - $enCur)).Trim()
-      $enCur = [Math]::Min($enSplit + 1, $enTotal)
+      $enSplit = Find-EnSplit $en $enCur $target
+      $enSeg   = $en.Substring($enCur, [Math]::Max(0, $enSplit - $enCur)).Trim()
+      $enCur   = [Math]::Min($enSplit + 1, $enTotal)
     } else {
       $enSeg = if ($enCur -lt $enTotal) { $en.Substring($enCur).Trim() } else { '' }
     }
 
-    $segs.Add(@{ phrases = Get-Phrases $heSeg $enSeg }) | Out-Null
+    $segs.Add(@{ phrases = & $phraseBuilder $heSeg $enSeg }) | Out-Null
   }
   return @($segs)
+}
+
+function Get-Segments([string]$he, [string]$en) {
+  $heSegs = @(Get-HebrewSegments $he)
+  if ($heSegs.Count -gt 1) {
+    # Markers found - marker-based segments, each potentially holding multiple phrases
+    return Split-AlignedSegments $heSegs $en { param($h, $e) Get-Phrases $h $e }
+  }
+
+  # No markers. If single sentence, single segment with single phrase.
+  $heSents = @(Get-HebrewSentences $he)
+  if ($heSents.Count -le 1) {
+    return @(@{ phrases = @(@{ he = $he; en = $en }) })
+  }
+
+  # Multiple Hebrew sentences but no markers: each Hebrew sentence becomes its
+  # own segment with one phrase. English is distributed proportionally.
+  return Split-AlignedSegments $heSents $en { param($h, $e) @(@{ he = $h; en = $e }) }
 }
 
 # ── Custom JSON serialiser (guarantees [...] for any segment count) ────────────
@@ -330,7 +334,7 @@ foreach ($tract in $TRACTATES) {
       if ($enRaw -is [array]) { $enRaw = $enRaw -join ' ' }
 
       $he   = Strip-Html ([string]$heRaw)
-      $en   = Extract-EnglishText ([string]$enRaw)
+      $en   = Strip-Html ([string]$enRaw)
       $segs = Get-Segments $he $en
       $mJsonParts.Add("`"$mNum`":" + (ConvertTo-SegsJson $segs)) | Out-Null
       $totalM++
