@@ -121,6 +121,15 @@
       </div>
       <span style="color:var(--muted);font-size:0.78rem;margin-left:4px;">per segment</span>
     </div>
+    <div class="setting-row">
+      <label>Final</label>
+      <div class="rep-control">
+        <button class="rep-btn" id="repMinusFinal">−</button>
+        <span id="repCountFinal">3</span>
+        <button class="rep-btn" id="repPlusFinal">+</button>
+      </div>
+      <span style="color:var(--muted);font-size:0.78rem;margin-left:4px;">full review</span>
+    </div>
   </div>
 
   <div class="state-banner" id="stateBanner"></div>
@@ -143,6 +152,7 @@
     <div class="ctrl-row">
       <button class="ctrl-btn primary"   id="playBtn">Play</button>
       <button class="ctrl-btn secondary" id="pauseBtn">Pause</button>
+      <button class="ctrl-btn secondary" id="skipBtn">Skip</button>
       <button class="ctrl-btn secondary" id="stopBtn">Stop</button>
     </div>
   </div>
@@ -152,13 +162,15 @@
     const setStatus = msg => { $('status').textContent = msg; };
 
     // ── State ──────────────────────────────────────────────────────
-    let segments      = [];
-    let segIndex      = 0;
-    let repTotal      = 3;
-    let repCurrent    = 0;
-    let isFinalReview = false;
-    let appState      = 'idle';
-    let awaitingInput = false;
+    let segments        = [];
+    let segIndex        = 0;
+    let repTotal        = 3;
+    let repCurrent      = 0;
+    let repTotalFinal   = 3;
+    let repCurrentFinal = 0;
+    let isFinalReview   = false;
+    let appState        = 'idle';
+    let awaitingInput   = false;
     let lastCaptureTime = 0;
 
     let utterQueue = [], utterIndex = 0, isPaused = false;
@@ -256,6 +268,8 @@
     $('speed').addEventListener('input', e => { $('speedVal').textContent = parseFloat(e.target.value).toFixed(1) + '×'; });
     $('repMinus').addEventListener('click', () => { if (repTotal > 1) { repTotal--; $('repCount').textContent = repTotal; } });
     $('repPlus').addEventListener('click',  () => { if (repTotal < 10) { repTotal++; $('repCount').textContent = repTotal; } });
+    $('repMinusFinal').addEventListener('click', () => { if (repTotalFinal > 1) { repTotalFinal--; $('repCountFinal').textContent = repTotalFinal; } });
+    $('repPlusFinal').addEventListener('click',  () => { if (repTotalFinal < 10) { repTotalFinal++; $('repCountFinal').textContent = repTotalFinal; } });
 
     // ── State banner ───────────────────────────────────────────────
     function setBanner(msg, cls) {
@@ -321,7 +335,7 @@
     function setRoundBadge() {
       if (!segments.length) { $('roundBadge').innerHTML = ''; return; }
       $('roundBadge').innerHTML = isFinalReview
-        ? `<strong>Final Review</strong> — full Mishnah`
+        ? `<strong>Final Review</strong> &nbsp;|&nbsp; Round <strong>${repCurrentFinal}</strong> of <strong>${repTotalFinal}</strong>`
         : `Segment <strong>${segIndex+1}</strong> of <strong>${segments.length}</strong> &nbsp;|&nbsp; Round <strong>${repCurrent}</strong> of <strong>${repTotal}</strong>`;
     }
 
@@ -329,7 +343,7 @@
     function resetSession() {
       speechGen++;
       lastCaptureTime = 0;
-      segIndex = 0; repCurrent = 0; isFinalReview = false;
+      segIndex = 0; repCurrent = 0; repCurrentFinal = 0; isFinalReview = false;
       appState = 'idle'; awaitingInput = false; isPaused = false;
       $('speakFallback').classList.remove('visible');
       hide($('transcriptBox'));
@@ -458,14 +472,24 @@
     }
 
     function startFinalReview() {
-      isFinalReview = true; repCurrent = 0; clearMid(); setRoundBadge();
+      isFinalReview = true;
+      repCurrent = 0;
+      repCurrentFinal = 0;
       document.querySelectorAll('.segment-card').forEach(c => c.classList.remove('active-seg'));
-      appState = 'reading'; isPaused = false;
+      doFinalRound(true);
+    }
+
+    function doFinalRound(announce) {
+      repCurrentFinal++;
+      clearMid();
+      setRoundBadge();
+      appState = 'reading';
+      isPaused = false;
       speechGen++;
       speechSynthesis.cancel();
-      speakText('Final review — full Mishnah.', 'en-US', () => {
-        speakSequence(buildFullQueue(), () => { beginListening(); });
-      });
+      const run = () => speakSequence(buildFullQueue(), () => { beginListening(); });
+      if (announce) speakText('Final review — full Mishnah.', 'en-US', run);
+      else run();
     }
 
     function buildSegmentQueue(si) {
@@ -504,10 +528,14 @@
       const lastSeg   = segIndex >= segments.length - 1;
 
       if (isFinalReview) {
-        speakText('Great work. Session complete!', 'en-US', () => {
-          appState = 'done'; hideBanner();
-          setStatus('Session complete!'); stopRecognition();
-        });
+        if (repCurrentFinal >= repTotalFinal) {
+          speakText('Great work. Session complete!', 'en-US', () => {
+            appState = 'done'; hideBanner();
+            setStatus('Session complete!'); stopRecognition();
+          });
+        } else {
+          speakText('Good.', 'en-US', () => doFinalRound(false));
+        }
         return;
       }
 
@@ -560,6 +588,50 @@
       resetSession();
       if (segments.length) { renderSegments(); setStatus('Stopped. Tap Play to start over.'); }
     });
+
+    // Skip — advance the current step. While listening, treats this repetition
+    // as completed and moves to the next round / segment / final review.
+    // While reading, cancels TTS and jumps to listening for the same step.
+    $('skipBtn').addEventListener('click', () => {
+      if (!segments.length || appState === 'idle' || appState === 'done') return;
+      if (appState === 'reading') {
+        speechSynthesis.cancel();
+        speechGen++;
+        beginListening();
+        return;
+      }
+      if (appState === 'listening') {
+        awaitingInput = false;
+        stopRecognition();
+        clearMid();
+        if (isFinalReview) {
+          if (repCurrentFinal >= repTotalFinal) {
+            appState = 'done'; hideBanner();
+            setStatus('Session complete!');
+          } else {
+            startRecognition();
+            doFinalRound(false);
+          }
+          return;
+        }
+        const lastRound = repCurrent >= repTotal;
+        const lastSeg   = segIndex >= segments.length - 1;
+        if (lastRound) {
+          if (lastSeg) { startRecognition(); startFinalReview(); }
+          else         { segIndex++; repCurrent = 0; startRecognition(); startSegmentRound(); }
+        } else {
+          startRecognition();
+          startSegmentRound();
+        }
+      }
+    });
+
+    // ── Service worker (offline cache) ─────────────────────────────
+    if ('serviceWorker' in navigator) {
+      window.addEventListener('load', () => {
+        navigator.serviceWorker.register('sw.js').catch(() => {});
+      });
+    }
 
     // ── Boot ───────────────────────────────────────────────────────
     loadMishnaData();

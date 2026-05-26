@@ -45,7 +45,7 @@ $TRACTATES = @(
   @{s='Shevuot';       d="Shevu'ot";       seder='Nezikin';  ch=8},
   @{s='Eduyot';        d='Eduyot';         seder='Nezikin';  ch=8},
   @{s='Avodah_Zarah';  d='Avodah Zarah';   seder='Nezikin';  ch=5},
-  @{s='Pirkei_Avot';   d='Avot';           seder='Nezikin';  ch=5},
+  @{s='Avot';          d='Avot';           seder='Nezikin';  ch=6},
   @{s='Horayot';       d='Horayot';        seder='Nezikin';  ch=3},
   @{s='Zevachim';      d='Zevachim';       seder='Kodashim'; ch=14},
   @{s='Menachot';      d='Menachot';       seder='Kodashim'; ch=13},
@@ -313,7 +313,7 @@ foreach ($tract in $TRACTATES) {
   for ($ch = 1; $ch -le $tract.ch; $ch++) {
     $sefData = $null
     try {
-      $url     = "https://www.sefaria.org/api/texts/Mishnah_$($tract.s).$ch`?context=0&commentary=0"
+      $url     = "https://www.sefaria.org/api/texts/Mishnah_$($tract.s).$ch`?context=0&commentary=0&ven=William_Davidson_Edition_-_English&vlang=english"
       $sefData = Invoke-Sefaria $url
     } catch {
       Write-Host " [ch$ch ERR]" -NoNewline -ForegroundColor Red
@@ -325,6 +325,26 @@ foreach ($tract in $TRACTATES) {
     $enArr = if ($sefData.text -is [array]) { $sefData.text } else { @($sefData.text) }
     $count = [Math]::Max($heArr.Count, $enArr.Count)
 
+    # If William Davidson has no English (e.g. Avot), fall back to Kulp's clean
+    # translation. Kulp's text doesn't have bold/commentary structure so the
+    # full HTML-stripped text IS the translation.
+    $useFullText = $false
+    $hasEn = $false
+    foreach ($t in $enArr) {
+      $s = if ($t -is [array]) { $t -join ' ' } else { [string]$t }
+      if ($s.Trim().Length -gt 10) { $hasEn = $true; break }
+    }
+    if (-not $hasEn) {
+      try {
+        $altUrl = "https://www.sefaria.org/api/texts/Mishnah_$($tract.s).$ch`?context=0&commentary=0&ven=Mishnah_Yomit_by_Dr._Joshua_Kulp&vlang=english"
+        $alt    = Invoke-Sefaria $altUrl
+        if ($alt.text) {
+          $enArr = if ($alt.text -is [array]) { $alt.text } else { @($alt.text) }
+          $useFullText = $true
+        }
+      } catch {}
+    }
+
     $mJsonParts = [System.Collections.ArrayList]::new()
     for ($m = 0; $m -lt $count; $m++) {
       $mNum  = $m + 1
@@ -334,7 +354,7 @@ foreach ($tract in $TRACTATES) {
       if ($enRaw -is [array]) { $enRaw = $enRaw -join ' ' }
 
       $he   = Strip-Html ([string]$heRaw)
-      $en   = Strip-Html ([string]$enRaw)
+      $en   = if ($useFullText) { Strip-Html ([string]$enRaw) } else { Extract-EnglishText ([string]$enRaw) }
       $segs = Get-Segments $he $en
       $mJsonParts.Add("`"$mNum`":" + (ConvertTo-SegsJson $segs)) | Out-Null
       $totalM++
