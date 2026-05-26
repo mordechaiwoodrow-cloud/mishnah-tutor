@@ -82,6 +82,17 @@
     .speak-fallback.visible { display: block; }
     .speak-fallback:active { opacity: 0.75; }
 
+    .ai-improve {
+      width: 100%; padding: 12px; font-size: 0.9rem; font-weight: 600;
+      background: rgba(100,160,255,0.15); color: #8ab4ff;
+      border: 1px solid rgba(100,160,255,0.4); border-radius: 10px;
+      cursor: pointer; -webkit-tap-highlight-color: transparent;
+      margin-bottom: 10px; display: none;
+    }
+    .ai-improve.visible { display: block; }
+    .ai-improve:active { opacity: 0.7; }
+    .ai-improve:disabled { opacity: 0.5; cursor: default; }
+
     .controls { position: fixed; bottom: 0; left: 0; right: 0; background: var(--panel); border-top: 1px solid var(--border); padding: 10px 16px; padding-bottom: calc(10px + env(safe-area-inset-bottom)); }
     .ctrl-row { display: flex; gap: 8px; }
     .ctrl-btn { flex: 1; padding: 13px; font-size: 0.95rem; font-weight: 600; border: none; border-radius: 8px; cursor: pointer; -webkit-tap-highlight-color: transparent; }
@@ -146,6 +157,7 @@
     <div id="feedbackText"></div>
   </div>
 
+  <button class="ai-improve" id="aiImproveBtn">✨ Improve translation alignment with AI (~1¢)</button>
   <button class="speak-fallback" id="speakFallback">🎙 Tap to Speak</button>
 
   <div class="controls">
@@ -280,6 +292,15 @@
     function hideBanner() { $('stateBanner').className = 'state-banner'; }
 
     // ── Load ───────────────────────────────────────────────────────
+    // Currently-loaded mishna reference (for AI-improve button)
+    let currentTractate = '', currentChapter = 0, currentMishna = 0;
+
+    function aiCacheKey(t, c, m) { return `aiAligned:${t}:${c}:${m}`; }
+    function isAligned(t) {
+      const aligned = (mishnaData && mishnaData._meta && mishnaData._meta.aligned) || [];
+      return aligned.indexOf(t) !== -1;
+    }
+
     $('loadBtn').addEventListener('click', () => {
       if (!mishnaData) return;
       speechSynthesis.cancel();
@@ -288,14 +309,56 @@
       const key = $('tractate').value;
       const ch  = $('chapter').value;
       const m   = $('mishnah').value;
-      const segs = ((mishnaData[key] || {})[ch] || {})[m];
+      currentTractate = key; currentChapter = ch; currentMishna = m;
+
+      // Prefer locally-cached AI-aligned version if present
+      const cached = localStorage.getItem(aiCacheKey(key, ch, m));
+      let segs;
+      if (cached) {
+        try { segs = JSON.parse(cached); } catch { segs = null; }
+      }
+      if (!segs) segs = ((mishnaData[key] || {})[ch] || {})[m];
+
       if (!segs || !segs.length) {
         setStatus('No data for this mishnah.');
+        $('aiImproveBtn').classList.remove('visible');
         return;
       }
       segments = segs;
       setStatus(`Ready — ${segments.length} segment${segments.length !== 1 ? 's' : ''}. Tap Play.`);
       renderSegments();
+      // Show "Improve with AI" if this tractate isn't pre-aligned AND we haven't cached it yet
+      if (!isAligned(key) && !cached) {
+        $('aiImproveBtn').classList.add('visible');
+        $('aiImproveBtn').disabled = false;
+        $('aiImproveBtn').textContent = '✨ Improve translation alignment with AI (~1¢)';
+      } else {
+        $('aiImproveBtn').classList.remove('visible');
+      }
+    });
+
+    $('aiImproveBtn').addEventListener('click', async () => {
+      if (!currentTractate) return;
+      const btn = $('aiImproveBtn');
+      btn.disabled = true;
+      btn.textContent = '⏳ Aligning…';
+      try {
+        const res = await fetch('/api/align', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ tractate: currentTractate, chapter: Number(currentChapter), mishna: Number(currentMishna) })
+        });
+        const data = await res.json();
+        if (!res.ok || !data.segments) throw new Error(data.error || 'Alignment failed');
+        localStorage.setItem(aiCacheKey(currentTractate, currentChapter, currentMishna), JSON.stringify(data.segments));
+        segments = data.segments;
+        renderSegments();
+        btn.classList.remove('visible');
+        setStatus(`Aligned — ${segments.length} segment${segments.length !== 1 ? 's' : ''}. Tap Play.`);
+      } catch (e) {
+        btn.textContent = '⚠ Failed: ' + e.message + ' (tap to retry)';
+        btn.disabled = false;
+      }
     });
 
     // ── Display ────────────────────────────────────────────────────

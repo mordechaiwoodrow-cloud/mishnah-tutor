@@ -1,6 +1,6 @@
 // Mishnah Tutor service worker — caches the whole app + data for offline use.
 // Bump CACHE when you update mishna-data.json or index.html.
-const CACHE = 'mishna-tutor-v5';
+const CACHE = 'mishna-tutor-v7';
 const ASSETS = [
   './',
   './index.html',
